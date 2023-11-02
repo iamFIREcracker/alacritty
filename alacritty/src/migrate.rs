@@ -29,6 +29,7 @@ pub fn migrate(options: MigrateOptions) {
 
     // If we're doing a wet run, perform a dry run first for safety.
     if !options.dry_run {
+        #[allow(clippy::redundant_clone)]
         let mut options = options.clone();
         options.silent = true;
         options.dry_run = true;
@@ -151,7 +152,7 @@ fn migrate_renames(config: &mut Value) -> Result<(), String> {
     // key_bindings -> keyboard.bindings
     move_value(config_table, &["key_bindings"], &["keyboard", "bindings"])?;
 
-    // mouse_bindings -> keyboard.bindings
+    // mouse_bindings -> mouse.bindings
     move_value(config_table, &["mouse_bindings"], &["mouse", "bindings"])?;
 
     Ok(())

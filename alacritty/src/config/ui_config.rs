@@ -7,7 +7,7 @@ use log::{error, warn};
 use serde::de::{Error as SerdeError, MapAccess, Visitor};
 use serde::{self, Deserialize, Deserializer};
 use unicode_width::UnicodeWidthChar;
-use winit::event::{ModifiersState, VirtualKeyCode};
+use winit::keyboard::{Key, KeyLocation, ModifiersState};
 
 use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 use alacritty_terminal::config::{Config as TerminalConfig, Program, LOG_TARGET_CONFIG};
@@ -15,7 +15,7 @@ use alacritty_terminal::term::search::RegexSearch;
 
 use crate::config::bell::BellConfig;
 use crate::config::bindings::{
-    self, Action, Binding, Key, KeyBinding, ModeWrapper, ModsWrapper, MouseBinding,
+    self, Action, Binding, BindingKey, KeyBinding, ModeWrapper, ModsWrapper, MouseBinding,
 };
 use crate::config::color::Colors;
 use crate::config::debug::Debug;
@@ -25,7 +25,7 @@ use crate::config::window::WindowConfig;
 
 /// Regex used for the default URL hint.
 #[rustfmt::skip]
-const URL_REGEX: &str = "(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)\
+const URL_REGEX: &str = "(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file:|git://|ssh:|ftp://)\
                          [^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+";
 
 #[derive(ConfigDeserialize, Clone, Debug, PartialEq)]
@@ -131,13 +131,13 @@ impl UiConfig {
         };
 
         for hint in &self.hints.enabled {
-            let binding = match hint.binding {
+            let binding = match &hint.binding {
                 Some(binding) => binding,
                 None => continue,
             };
 
             let binding = KeyBinding {
-                trigger: binding.key,
+                trigger: binding.key.clone(),
                 mods: binding.mods.0,
                 mode: binding.mode.mode,
                 notmode: binding.mode.not_mode,
@@ -208,7 +208,7 @@ pub fn deserialize_bindings<'a, D, T>(
 ) -> Result<Vec<Binding<T>>, D::Error>
 where
     D: Deserializer<'a>,
-    T: Copy + Eq,
+    T: Clone + Eq,
     Binding<T>: Deserialize<'a>,
 {
     let values = Vec::<toml::Value>::deserialize(deserializer)?;
@@ -278,8 +278,11 @@ impl Default for Hints {
                 post_processing: true,
                 mouse: Some(HintMouse { enabled: true, mods: Default::default() }),
                 binding: Some(HintBinding {
-                    key: Key::Keycode(VirtualKeyCode::U),
-                    mods: ModsWrapper(ModifiersState::SHIFT | ModifiersState::CTRL),
+                    key: BindingKey::Keycode {
+                        key: Key::Character("u".into()),
+                        location: KeyLocation::Standard,
+                    },
+                    mods: ModsWrapper(ModifiersState::SHIFT | ModifiersState::CONTROL),
                     mode: Default::default(),
                 }),
             }],
@@ -454,10 +457,10 @@ impl<'de> Deserialize<'de> for HintContent {
 }
 
 /// Binding for triggering a keyboard hint.
-#[derive(Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HintBinding {
-    pub key: Key,
+    pub key: BindingKey,
     #[serde(default)]
     pub mods: ModsWrapper,
     #[serde(default)]
@@ -480,11 +483,11 @@ pub struct LazyRegex(Rc<RefCell<LazyRegexVariant>>);
 
 impl LazyRegex {
     /// Execute a function with the compiled regex DFAs as parameter.
-    pub fn with_compiled<T, F>(&self, mut f: F) -> T
+    pub fn with_compiled<T, F>(&self, f: F) -> Option<T>
     where
-        F: FnMut(&RegexSearch) -> T,
+        F: FnMut(&mut RegexSearch) -> T,
     {
-        f(self.0.borrow_mut().compiled())
+        self.0.borrow_mut().compiled().map(f)
     }
 }
 
@@ -503,6 +506,7 @@ impl<'de> Deserialize<'de> for LazyRegex {
 pub enum LazyRegexVariant {
     Compiled(Box<RegexSearch>),
     Pattern(String),
+    Uncompilable,
 }
 
 impl LazyRegexVariant {
@@ -510,27 +514,29 @@ impl LazyRegexVariant {
     ///
     /// If the regex is not already compiled, this will compile the DFAs and store them for future
     /// access.
-    fn compiled(&mut self) -> &RegexSearch {
+    fn compiled(&mut self) -> Option<&mut RegexSearch> {
         // Check if the regex has already been compiled.
         let regex = match self {
-            Self::Compiled(regex_search) => return regex_search,
+            Self::Compiled(regex_search) => return Some(regex_search),
+            Self::Uncompilable => return None,
             Self::Pattern(regex) => regex,
         };
 
         // Compile the regex.
         let regex_search = match RegexSearch::new(regex) {
             Ok(regex_search) => regex_search,
-            Err(error) => {
-                error!("hint regex is invalid: {}", error);
-                RegexSearch::new("").unwrap()
+            Err(err) => {
+                error!("could not compile hint regex: {err}");
+                *self = Self::Uncompilable;
+                return None;
             },
         };
         *self = Self::Compiled(Box::new(regex_search));
 
         // Return a reference to the compiled DFAs.
         match self {
-            Self::Compiled(dfas) => dfas,
-            Self::Pattern(_) => unreachable!(),
+            Self::Compiled(dfas) => Some(dfas),
+            _ => unreachable!(),
         }
     }
 }
@@ -544,3 +550,61 @@ impl PartialEq for LazyRegexVariant {
     }
 }
 impl Eq for LazyRegexVariant {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use alacritty_terminal::term::test::mock_term;
+
+    use crate::display::hint::visible_regex_match_iter;
+
+    #[test]
+    fn positive_url_parsing_regex_test() {
+        for regular_url in [
+            "ipfs:s0mEhAsh",
+            "ipns:an0TherHash1234",
+            "magnet:?xt=urn:btih:L0UDHA5H12",
+            "mailto:example@example.org",
+            "gemini://gemini.example.org/",
+            "gopher://gopher.example.org",
+            "https://www.example.org",
+            "http://example.org",
+            "news:some.news.portal",
+            "file:///C:/Windows/",
+            "file:/home/user/whatever",
+            "git://github.com/user/repo.git",
+            "ssh:git@github.com:user/repo.git",
+            "ftp://ftp.example.org",
+        ] {
+            let term = mock_term(regular_url);
+            let mut regex = RegexSearch::new(URL_REGEX).unwrap();
+            let matches = visible_regex_match_iter(&term, &mut regex).collect::<Vec<_>>();
+            assert_eq!(
+                matches.len(),
+                1,
+                "Should have exactly one match url {regular_url}, but instead got: {matches:?}"
+            )
+        }
+    }
+
+    #[test]
+    fn negative_url_parsing_regex_test() {
+        for url_like in [
+            "http::trace::on_request::log_parameters",
+            "http//www.example.org",
+            "/user:example.org",
+            "mailto: example@example.org",
+            "http://<script>alert('xss')</script>",
+            "mailto:",
+        ] {
+            let term = mock_term(url_like);
+            let mut regex = RegexSearch::new(URL_REGEX).unwrap();
+            let matches = visible_regex_match_iter(&term, &mut regex).collect::<Vec<_>>();
+            assert!(
+                matches.is_empty(),
+                "Should not match url in string {url_like}, but instead got: {matches:?}"
+            )
+        }
+    }
+}

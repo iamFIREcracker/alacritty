@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Packaging
 
-- Minimum Rust version has been bumped to 1.65.0
+- Minimum Rust version has been bumped to 1.70.0
 - Manpages are now generated using `scdoc` (see `INSTALL.md`)
 
 ### Added
@@ -17,6 +17,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Warnings for unused configuration file options
 - Config option `persist` in `hints` config section
 - Support for dynamically loading conpty.dll on Windows
+- Support for keybindings with dead keys
+- `Back`/`Forward` mouse buttons support in bindings
+- Copy global IPC options (`-w -1`) for new windows
+- Bindings to create and navigate tabs on macOS
+- Support startup notify protocol to raise initial window on Wayland/X11
+- Debug option `prefer_egl` to prioritize EGL over other display APIs
+- Inline vi-mode search using `f`/`F`/`t`/`T`
+- `window.blur` config option to request blur for transparent windows
 
 ### Changed
 
@@ -29,6 +37,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Deprecated config option `key_bindings`, use `keyboard.bindings`
 - Deprecated config option `mouse_bindings`, use `mouse.bindings`
 - The default colorscheme is now based on base16 classic dark
+- IME popup now tries to not obscure the current cursor line
+- The double click threshold was raised to `400ms`
+- OSC 52 paste ability is now **disabled by default**; use `terminal.osc52` to adjust it
+- Apply `colors.transparent_background_colors` for selections, hints, and search matches
+- Underline full hint during keyboard selection
+- Synchronized updates now use `CSI 2026` instead of legacy `DCS` variant
+- In mouse mode with `Shift` pressed, mouse bindings without `Shift` are only triggered
+    if no exact binding (i.e. one with `Shift`) is found.
+
+### Fixed
+
+- Unconditional query of xdg-portal settings on Wayland
+- `Maximized` startup mode not filling the screen properly on GNOME Wayland
+- `OptionAsAlt` with `OnlyLeft`/`OnlyRight` settings not working properly on macOS
+- Default Vi key bindings for `Last`/`First` actions not working on X11/Wayland
+- Cut off wide characters in preedit string
+- Scrolling on touchscreens
+- Double clicking on CSD titlebar not always maximizing a window on Wayland
+- Excessive memory usage when using regexes with a large number of possible states
+- `window.decorations_theme_variant` not live reloading
+- Copy/Paste being truncated to 64KiB on Wayland
+- X11 clipboard lagging behind sometimes
+- High wakeup count on Wayland due to clipboard polling
+- Blocking paste freezing alacritty on Wayland
+- `Command` modifier persisting after `Cmd + Tab` on macOS
+- Crash on exit when using NVIDIA binary drivers on Wayland
+- `window.startup_mode` applied to window again when creating new tab
 
 ### Removed
 
@@ -36,6 +71,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Config option `colors.search.bar`, use `colors.footer_bar` instead
 - Config option `mouse.url`, use the `hints` config section
 - Config options `mouse.double_click` and `mouse.triple_click`
+
+## 0.12.3
+
+### Fixed
+
+- Crash on macOS Sonoma due to change in macOS resize handling
+- Crash when Wayland compositor advertises `wl_compositor@v5` interface
 
 ## 0.12.2
 

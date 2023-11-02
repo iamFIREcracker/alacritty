@@ -3,11 +3,13 @@ use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, ptr};
 
+use ahash::RandomState;
 use crossfont::Metrics;
 use glutin::context::{ContextApi, GlContext, PossiblyCurrentContext};
 use glutin::display::{GetGlDisplay, GlDisplay};
 use log::{debug, error, info, warn, LevelFilter};
 use once_cell::sync::OnceCell;
+use unicode_width::UnicodeWidthChar;
 
 use alacritty_terminal::index::Point;
 use alacritty_terminal::term::cell::Flags;
@@ -90,7 +92,7 @@ impl Renderer {
     /// supported OpenGL version.
     pub fn new(
         context: &PossiblyCurrentContext,
-        renderer_prefernce: Option<RendererPreference>,
+        renderer_preference: Option<RendererPreference>,
     ) -> Result<Self, Error> {
         // We need to load OpenGL functions once per instance, but only after we make our context
         // current due to WGL limitations.
@@ -117,7 +119,7 @@ impl Renderer {
         let is_gles_context = matches!(context.context_api(), ContextApi::Gles(_));
 
         // Use the config option to enforce a particular renderer configuration.
-        let (use_glsl3, allow_dsb) = match renderer_prefernce {
+        let (use_glsl3, allow_dsb) = match renderer_preference {
             Some(RendererPreference::Glsl3) => (true, true),
             Some(RendererPreference::Gles2) => (false, true),
             Some(RendererPreference::Gles2Pure) => (false, false),
@@ -175,15 +177,30 @@ impl Renderer {
         size_info: &SizeInfo,
         glyph_cache: &mut GlyphCache,
     ) {
-        let cells = string_chars.enumerate().map(|(i, character)| RenderableCell {
-            point: Point::new(point.line, point.column + i),
-            character,
-            extra: None,
-            flags: Flags::empty(),
-            bg_alpha: 1.0,
-            fg,
-            bg,
-            underline: fg,
+        let mut skip_next = false;
+        let cells = string_chars.enumerate().filter_map(|(i, character)| {
+            if skip_next {
+                skip_next = false;
+                return None;
+            }
+
+            let mut flags = Flags::empty();
+            if character.width() == Some(2) {
+                flags.insert(Flags::WIDE_CHAR);
+                // Wide character is always followed by a spacer, so skip it.
+                skip_next = true;
+            }
+
+            Some(RenderableCell {
+                point: Point::new(point.line, point.column + i),
+                character,
+                extra: None,
+                flags: Flags::empty(),
+                bg_alpha: 1.0,
+                fg,
+                bg,
+                underline: fg,
+            })
         });
 
         self.draw_cells(size_info, glyph_cache, cells);
@@ -237,7 +254,6 @@ impl Renderer {
         }
     }
 
-    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn finish(&self) {
         unsafe {
             gl::Finish();
@@ -272,15 +288,15 @@ struct GlExtensions;
 impl GlExtensions {
     /// Check if the given `extension` is supported.
     ///
-    /// This function will lazyly load OpenGL extensions.
+    /// This function will lazily load OpenGL extensions.
     fn contains(extension: &str) -> bool {
-        static OPENGL_EXTENSIONS: OnceCell<HashSet<&'static str>> = OnceCell::new();
+        static OPENGL_EXTENSIONS: OnceCell<HashSet<&'static str, RandomState>> = OnceCell::new();
 
         OPENGL_EXTENSIONS.get_or_init(Self::load_extensions).contains(extension)
     }
 
     /// Load available OpenGL extensions.
-    fn load_extensions() -> HashSet<&'static str> {
+    fn load_extensions() -> HashSet<&'static str, RandomState> {
         unsafe {
             let extensions = gl::GetString(gl::EXTENSIONS);
 
@@ -297,7 +313,7 @@ impl GlExtensions {
             } else {
                 match CStr::from_ptr(extensions as *mut _).to_str() {
                     Ok(ext) => ext.split_whitespace().collect(),
-                    Err(_) => HashSet::new(),
+                    Err(_) => Default::default(),
                 }
             }
         }

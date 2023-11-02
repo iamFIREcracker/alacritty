@@ -17,12 +17,16 @@ use std::time::{Duration, Instant};
 use log::debug;
 use winit::dpi::PhysicalPosition;
 use winit::event::{
-    ElementState, KeyboardInput, ModifiersState, MouseButton, MouseScrollDelta,
-    Touch as TouchEvent, TouchPhase,
+    ElementState, KeyEvent, Modifiers, MouseButton, MouseScrollDelta, Touch as TouchEvent,
+    TouchPhase,
 };
 use winit::event_loop::EventLoopWindowTarget;
 #[cfg(target_os = "macos")]
+use winit::keyboard::ModifiersKeyState;
+use winit::keyboard::{Key, ModifiersState};
+#[cfg(target_os = "macos")]
 use winit::platform::macos::{EventLoopWindowTargetExtMacOS, OptionAsAlt};
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::window::CursorIcon;
 
 use alacritty_terminal::ansi::{ClearMode, Handler};
@@ -35,12 +39,15 @@ use alacritty_terminal::term::{ClipboardType, Term, TermMode};
 use alacritty_terminal::vi_mode::ViMotion;
 
 use crate::clipboard::Clipboard;
-use crate::config::{Action, BindingMode, Key, MouseAction, SearchAction, UiConfig, ViAction};
+use crate::config::{
+    Action, BindingKey, BindingMode, MouseAction, SearchAction, UiConfig, ViAction,
+};
 use crate::display::hint::HintMatch;
 use crate::display::window::Window;
 use crate::display::{Display, SizeInfo};
 use crate::event::{
-    ClickState, Event, EventType, Mouse, TouchPurpose, TouchZoom, TYPING_SEARCH_DELAY,
+    ClickState, Event, EventType, InlineSearchState, Mouse, TouchPurpose, TouchZoom,
+    TYPING_SEARCH_DELAY,
 };
 use crate::message_bar::{self, Message};
 use crate::scheduler::{Scheduler, TimerId, Topic};
@@ -57,14 +64,11 @@ const MIN_SELECTION_SCROLLING_HEIGHT: f64 = 5.;
 /// Number of pixels for increasing the selection scrolling speed factor by one.
 const SELECTION_SCROLLING_STEP: f64 = 20.;
 
-/// Touch scroll speed.
-const TOUCH_SCROLL_FACTOR: f64 = 0.35;
-
 /// Distance before a touch input is considered a drag.
 const MAX_TAP_DISTANCE: f64 = 20.;
 
 /// Threshold used for double_click/triple_click.
-const CLICK_THRESHOLD: Duration = Duration::from_millis(300);
+const CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 
 /// Processes input from winit.
 ///
@@ -88,15 +92,16 @@ pub trait ActionContext<T: EventListener> {
     fn mouse_mut(&mut self) -> &mut Mouse;
     fn mouse(&self) -> &Mouse;
     fn touch_purpose(&mut self) -> &mut TouchPurpose;
-    fn received_count(&mut self) -> &mut usize;
-    fn suppress_chars(&mut self) -> &mut bool;
-    fn modifiers(&mut self) -> &mut ModifiersState;
+    fn modifiers(&mut self) -> &mut Modifiers;
     fn scroll(&mut self, _scroll: Scroll) {}
     fn window(&mut self) -> &mut Window;
     fn display(&mut self) -> &mut Display;
     fn terminal(&self) -> &Term<T>;
     fn terminal_mut(&mut self) -> &mut Term<T>;
     fn spawn_new_instance(&mut self) {}
+    #[cfg(target_os = "macos")]
+    fn create_new_window(&mut self, _tabbing_id: Option<String>) {}
+    #[cfg(not(target_os = "macos"))]
     fn create_new_window(&mut self) {}
     fn change_font_size(&mut self, _delta: f32) {}
     fn reset_font_size(&mut self) {}
@@ -120,6 +125,10 @@ pub trait ActionContext<T: EventListener> {
     fn search_active(&self) -> bool;
     fn on_typing_start(&mut self) {}
     fn toggle_vi_mode(&mut self) {}
+    fn inline_search_state(&mut self) -> &mut InlineSearchState;
+    fn start_inline_search(&mut self, _direction: Direction, _stop_short: bool) {}
+    fn inline_search_next(&mut self) {}
+    fn inline_search_previous(&mut self) {}
     fn hint_input(&mut self, _character: char) {}
     fn trigger_hint(&mut self, _hint: &HintMatch) {}
     fn expand_selection(&mut self) {}
@@ -255,6 +264,20 @@ impl<T: EventListener> Execute<T> for Action {
 
                 ctx.scroll(Scroll::Delta(scroll_lines));
             },
+            Action::Vi(ViAction::InlineSearchForward) => {
+                ctx.start_inline_search(Direction::Right, false)
+            },
+            Action::Vi(ViAction::InlineSearchBackward) => {
+                ctx.start_inline_search(Direction::Left, false)
+            },
+            Action::Vi(ViAction::InlineSearchForwardShort) => {
+                ctx.start_inline_search(Direction::Right, true)
+            },
+            Action::Vi(ViAction::InlineSearchBackwardShort) => {
+                ctx.start_inline_search(Direction::Left, true)
+            },
+            Action::Vi(ViAction::InlineSearchNext) => ctx.inline_search_next(),
+            Action::Vi(ViAction::InlineSearchPrevious) => ctx.inline_search_previous(),
             action @ Action::Search(_) if !ctx.search_active() => {
                 debug!("Ignoring {action:?}: Search mode inactive");
             },
@@ -362,8 +385,40 @@ impl<T: EventListener> Execute<T> for Action {
             },
             Action::ClearHistory => ctx.terminal_mut().clear_screen(ClearMode::Saved),
             Action::ClearLogNotice => ctx.pop_message(),
-            Action::SpawnNewInstance => ctx.spawn_new_instance(),
+            #[cfg(not(target_os = "macos"))]
             Action::CreateNewWindow => ctx.create_new_window(),
+            Action::SpawnNewInstance => ctx.spawn_new_instance(),
+            #[cfg(target_os = "macos")]
+            Action::CreateNewWindow => ctx.create_new_window(None),
+            #[cfg(target_os = "macos")]
+            Action::CreateNewTab => {
+                let tabbing_id = Some(ctx.window().tabbing_id());
+                ctx.create_new_window(tabbing_id);
+            },
+            #[cfg(target_os = "macos")]
+            Action::SelectNextTab => ctx.window().select_next_tab(),
+            #[cfg(target_os = "macos")]
+            Action::SelectPreviousTab => ctx.window().select_previous_tab(),
+            #[cfg(target_os = "macos")]
+            Action::SelectTab1 => ctx.window().select_tab_at_index(0),
+            #[cfg(target_os = "macos")]
+            Action::SelectTab2 => ctx.window().select_tab_at_index(1),
+            #[cfg(target_os = "macos")]
+            Action::SelectTab3 => ctx.window().select_tab_at_index(2),
+            #[cfg(target_os = "macos")]
+            Action::SelectTab4 => ctx.window().select_tab_at_index(3),
+            #[cfg(target_os = "macos")]
+            Action::SelectTab5 => ctx.window().select_tab_at_index(4),
+            #[cfg(target_os = "macos")]
+            Action::SelectTab6 => ctx.window().select_tab_at_index(5),
+            #[cfg(target_os = "macos")]
+            Action::SelectTab7 => ctx.window().select_tab_at_index(6),
+            #[cfg(target_os = "macos")]
+            Action::SelectTab8 => ctx.window().select_tab_at_index(7),
+            #[cfg(target_os = "macos")]
+            Action::SelectTab9 => ctx.window().select_tab_at_index(8),
+            #[cfg(target_os = "macos")]
+            Action::SelectLastTab => ctx.window().select_last_tab(),
             Action::ReceiveChar | Action::None => (),
         }
     }
@@ -421,7 +476,8 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         // Don't launch URLs if mouse has moved.
         self.ctx.mouse_mut().block_hint_launcher = true;
 
-        if (lmb_pressed || rmb_pressed) && (self.ctx.modifiers().shift() || !self.ctx.mouse_mode())
+        if (lmb_pressed || rmb_pressed)
+            && (self.ctx.modifiers().state().shift_key() || !self.ctx.mouse_mode())
         {
             self.ctx.update_selection(point, cell_side);
         } else if cell_changed
@@ -472,14 +528,14 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
         // Calculate modifiers value.
         let mut mods = 0;
-        let modifiers = self.ctx.modifiers();
-        if modifiers.shift() {
+        let modifiers = self.ctx.modifiers().state();
+        if modifiers.shift_key() {
             mods += 4;
         }
-        if modifiers.alt() {
+        if modifiers.alt_key() {
             mods += 8;
         }
-        if modifiers.ctrl() {
+        if modifiers.control_key() {
             mods += 16;
         }
 
@@ -539,7 +595,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
     fn on_mouse_press(&mut self, button: MouseButton) {
         // Handle mouse mode.
-        if !self.ctx.modifiers().shift() && self.ctx.mouse_mode() {
+        if !self.ctx.modifiers().state().shift_key() && self.ctx.mouse_mode() {
             self.ctx.mouse_mut().click_state = ClickState::None;
 
             let code = match button {
@@ -547,7 +603,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 MouseButton::Middle => 1,
                 MouseButton::Right => 2,
                 // Can't properly report more than three buttons..
-                MouseButton::Other(_) => return,
+                MouseButton::Back | MouseButton::Forward | MouseButton::Other(_) => return,
             };
 
             self.mouse_report(code, ElementState::Pressed);
@@ -591,7 +647,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 self.ctx.clear_selection();
 
                 // Start new empty selection.
-                if self.ctx.modifiers().ctrl() {
+                if self.ctx.modifiers().state().control_key() {
                     self.ctx.start_selection(SelectionType::Block, point, side);
                 } else {
                     self.ctx.start_selection(SelectionType::Simple, point, side);
@@ -616,13 +672,13 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
     }
 
     fn on_mouse_release(&mut self, button: MouseButton) {
-        if !self.ctx.modifiers().shift() && self.ctx.mouse_mode() {
+        if !self.ctx.modifiers().state().shift_key() && self.ctx.mouse_mode() {
             let code = match button {
                 MouseButton::Left => 0,
                 MouseButton::Middle => 1,
                 MouseButton::Right => 2,
                 // Can't properly report more than three buttons.
-                MouseButton::Other(_) => return,
+                MouseButton::Back | MouseButton::Forward | MouseButton::Other(_) => return,
             };
             self.mouse_report(code, ElementState::Released);
             return;
@@ -645,11 +701,16 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
     }
 
     pub fn mouse_wheel_input(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
+        let multiplier = self.ctx.config().terminal_config.scrolling.multiplier;
         match delta {
             MouseScrollDelta::LineDelta(columns, lines) => {
                 let new_scroll_px_x = columns * self.ctx.size_info().cell_width();
                 let new_scroll_px_y = lines * self.ctx.size_info().cell_height();
-                self.scroll_terminal(new_scroll_px_x as f64, new_scroll_px_y as f64);
+                self.scroll_terminal(
+                    new_scroll_px_x as f64,
+                    new_scroll_px_y as f64,
+                    multiplier as f64,
+                );
             },
             MouseScrollDelta::PixelDelta(mut lpos) => {
                 match phase {
@@ -666,7 +727,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                             lpos.x = 0.;
                         }
 
-                        self.scroll_terminal(lpos.x, lpos.y);
+                        self.scroll_terminal(lpos.x, lpos.y, multiplier as f64);
                     },
                     _ => (),
                 }
@@ -674,7 +735,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         }
     }
 
-    fn scroll_terminal(&mut self, new_scroll_x_px: f64, new_scroll_y_px: f64) {
+    fn scroll_terminal(&mut self, new_scroll_x_px: f64, new_scroll_y_px: f64, multiplier: f64) {
         const MOUSE_WHEEL_UP: u8 = 64;
         const MOUSE_WHEEL_DOWN: u8 = 65;
         const MOUSE_WHEEL_LEFT: u8 = 66;
@@ -705,10 +766,8 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             .terminal()
             .mode()
             .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
-            && !self.ctx.modifiers().shift()
+            && !self.ctx.modifiers().state().shift_key()
         {
-            let multiplier = f64::from(self.ctx.config().terminal_config.scrolling.multiplier);
-
             self.ctx.mouse_mut().accumulated_scroll.x += new_scroll_x_px * multiplier;
             self.ctx.mouse_mut().accumulated_scroll.y += new_scroll_y_px * multiplier;
 
@@ -735,7 +794,6 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
             self.ctx.write_to_pty(content);
         } else {
-            let multiplier = f64::from(self.ctx.config().terminal_config.scrolling.multiplier);
             self.ctx.mouse_mut().accumulated_scroll.y += new_scroll_y_px * multiplier;
 
             let lines = (self.ctx.mouse().accumulated_scroll.y / height) as i32;
@@ -775,7 +833,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             TouchPurpose::Tap(start) => TouchPurpose::Zoom(TouchZoom::new((start, touch))),
             TouchPurpose::Zoom(zoom) => TouchPurpose::Invalid(zoom.slots()),
             TouchPurpose::Scroll(event) | TouchPurpose::Select(event) => {
-                let mut set = HashSet::new();
+                let mut set = HashSet::default();
                 set.insert(event.id);
                 TouchPurpose::Invalid(set)
             },
@@ -823,7 +881,8 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 let delta_y = touch.location.y - last_touch.location.y;
                 *touch_purpose = TouchPurpose::Scroll(touch);
 
-                self.scroll_terminal(0., delta_y * TOUCH_SCROLL_FACTOR);
+                // Use a fixed scroll factor for touchscreens, to accurately track finger motion.
+                self.scroll_terminal(0., delta_y, 1.0);
             },
             TouchPurpose::Select(_) => self.mouse_moved(touch.location),
             TouchPurpose::Invalid(_) => (),
@@ -870,6 +929,25 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         }
     }
 
+    /// Reset mouse cursor based on modifier and terminal state.
+    #[inline]
+    pub fn reset_mouse_cursor(&mut self) {
+        let mouse_state = self.cursor_state();
+        self.ctx.window().set_mouse_cursor(mouse_state);
+    }
+
+    /// Modifier state change.
+    pub fn modifiers_input(&mut self, modifiers: Modifiers) {
+        *self.ctx.modifiers() = modifiers;
+
+        // Prompt hint highlight update.
+        self.ctx.mouse_mut().hint_highlight_dirty = true;
+
+        // Update mouse state and check for URL change.
+        let mouse_state = self.cursor_state();
+        self.ctx.window().set_mouse_cursor(mouse_state);
+    }
+
     pub fn mouse_input(&mut self, state: ElementState, button: MouseButton) {
         match button {
             MouseButton::Left => self.ctx.mouse_mut().left_button_state = state,
@@ -879,7 +957,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         }
 
         // Skip normal mouse events if the message bar has been clicked.
-        if self.message_bar_cursor_state() == Some(CursorIcon::Hand)
+        if self.message_bar_cursor_state() == Some(CursorIcon::Pointer)
             && state == ElementState::Pressed
         {
             let size = self.ctx.size_info();
@@ -894,7 +972,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
             let new_icon = match current_lines.cmp(&new_lines) {
                 Ordering::Less => CursorIcon::Default,
-                Ordering::Equal => CursorIcon::Hand,
+                Ordering::Equal => CursorIcon::Pointer,
                 Ordering::Greater => {
                     if self.ctx.mouse_mode() {
                         CursorIcon::Default
@@ -917,16 +995,64 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         }
     }
 
+    /// Attempt to find a binding and execute its action.
+    ///
+    /// The provided mode, mods, and key must match what is allowed by a binding
+    /// for its action to be executed.
+    fn process_mouse_bindings(&mut self, button: MouseButton) {
+        let mode = BindingMode::new(self.ctx.terminal().mode(), self.ctx.search_active());
+        let mouse_mode = self.ctx.mouse_mode();
+        let mods = self.ctx.modifiers().state();
+        let mouse_bindings = self.ctx.config().mouse_bindings().to_owned();
+
+        // If mouse mode is active, also look for bindings without shift.
+        let mut check_fallback = mouse_mode && mods.contains(ModifiersState::SHIFT);
+
+        for binding in &mouse_bindings {
+            if binding.is_triggered_by(mode, mods, &button) {
+                binding.action.execute(&mut self.ctx);
+                check_fallback = false;
+            }
+        }
+
+        if check_fallback {
+            let fallback_mods = mods & !ModifiersState::SHIFT;
+            for binding in &mouse_bindings {
+                if binding.is_triggered_by(mode, fallback_mods, &button) {
+                    binding.action.execute(&mut self.ctx);
+                }
+            }
+        }
+    }
+
     /// Process key input.
-    pub fn key_input(&mut self, input: KeyboardInput) {
+    pub fn key_input(&mut self, key: KeyEvent) {
         // IME input will be applied on commit and shouldn't trigger key bindings.
-        if self.ctx.display().ime.preedit().is_some() {
+        if key.state == ElementState::Released || self.ctx.display().ime.preedit().is_some() {
             return;
         }
 
+        let text = key.text_with_all_modifiers().unwrap_or_default();
+
         // All key bindings are disabled while a hint is being selected.
         if self.ctx.display().hint_state.active() {
-            *self.ctx.suppress_chars() = false;
+            for character in text.chars() {
+                self.ctx.hint_input(character);
+            }
+            return;
+        }
+
+        // First key after inline search is captured.
+        let inline_state = self.ctx.inline_search_state();
+        if mem::take(&mut inline_state.char_pending) {
+            if let Some(c) = text.chars().next() {
+                inline_state.character = Some(c);
+
+                // Immediately move to the captured character.
+                self.ctx.inline_search_next();
+            }
+
+            // Ignore all other characters in `text`.
             return;
         }
 
@@ -939,102 +1065,78 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             }
         }
 
-        // Reset character suppression.
-        *self.ctx.suppress_chars() = false;
-
-        if let ElementState::Pressed = input.state {
-            *self.ctx.received_count() = 0;
-            self.process_key_bindings(input);
-        }
-    }
-
-    /// Modifier state change.
-    pub fn modifiers_input(&mut self, modifiers: ModifiersState) {
-        *self.ctx.modifiers() = modifiers;
-
-        // Prompt hint highlight update.
-        self.ctx.mouse_mut().hint_highlight_dirty = true;
-
-        // Update mouse state and check for URL change.
-        let mouse_state = self.cursor_state();
-        self.ctx.window().set_mouse_cursor(mouse_state);
-    }
-
-    /// Reset mouse cursor based on modifier and terminal state.
-    #[inline]
-    pub fn reset_mouse_cursor(&mut self) {
-        let mouse_state = self.cursor_state();
-        self.ctx.window().set_mouse_cursor(mouse_state);
-    }
-
-    /// Process a received character.
-    pub fn received_char(&mut self, c: char) {
-        let suppress_chars = *self.ctx.suppress_chars();
-
-        // Don't insert chars when we have IME running.
-        if self.ctx.display().ime.preedit().is_some() {
+        // Key bindings suppress the character input.
+        if self.process_key_bindings(&key) {
             return;
         }
 
-        // Handle hint selection over anything else.
-        if self.ctx.display().hint_state.active() && !suppress_chars {
-            self.ctx.hint_input(c);
-            return;
-        }
-
-        // Pass keys to search and ignore them during `suppress_chars`.
-        let search_active = self.ctx.search_active();
-        if suppress_chars || search_active || self.ctx.terminal().mode().contains(TermMode::VI) {
-            if search_active && !suppress_chars {
-                self.ctx.search_input(c);
+        if self.ctx.search_active() {
+            for character in text.chars() {
+                self.ctx.search_input(character);
             }
 
             return;
         }
 
-        self.ctx.on_terminal_input_start();
-
-        let utf8_len = c.len_utf8();
-        let mut bytes = vec![0; utf8_len];
-        c.encode_utf8(&mut bytes[..]);
-
-        #[cfg(not(target_os = "macos"))]
-        let alt_send_esc = true;
-
-        // Don't send ESC when `OptionAsAlt` is used. This doesn't handle
-        // `Only{Left,Right}` variants due to inability to distinguish them.
-        #[cfg(target_os = "macos")]
-        let alt_send_esc = self.ctx.config().window.option_as_alt != OptionAsAlt::None;
-
-        if alt_send_esc
-            && *self.ctx.received_count() == 0
-            && self.ctx.modifiers().alt()
-            && utf8_len == 1
-        {
-            bytes.insert(0, b'\x1b');
+        // Vi mode on its own doesn't have any input, the search input was done before.
+        if self.ctx.terminal().mode().contains(TermMode::VI) || text.is_empty() {
+            return;
         }
 
-        self.ctx.write_to_pty(bytes);
+        self.ctx.on_terminal_input_start();
 
-        *self.ctx.received_count() += 1;
+        let mut bytes = Vec::with_capacity(text.len() + 1);
+        if self.alt_send_esc() && text.len() == 1 {
+            bytes.push(b'\x1b');
+        }
+        bytes.extend_from_slice(text.as_bytes());
+
+        self.ctx.write_to_pty(bytes);
+    }
+
+    /// Whether we should send `ESC` due to `Alt` being pressed.
+    #[cfg(not(target_os = "macos"))]
+    fn alt_send_esc(&mut self) -> bool {
+        self.ctx.modifiers().state().alt_key()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn alt_send_esc(&mut self) -> bool {
+        let option_as_alt = self.ctx.config().window.option_as_alt();
+        self.ctx.modifiers().state().alt_key()
+            && (option_as_alt == OptionAsAlt::Both
+                || (option_as_alt == OptionAsAlt::OnlyLeft
+                    && self.ctx.modifiers().lalt_state() == ModifiersKeyState::Pressed)
+                || (option_as_alt == OptionAsAlt::OnlyRight
+                    && self.ctx.modifiers().ralt_state() == ModifiersKeyState::Pressed))
     }
 
     /// Attempt to find a binding and execute its action.
     ///
     /// The provided mode, mods, and key must match what is allowed by a binding
     /// for its action to be executed.
-    fn process_key_bindings(&mut self, input: KeyboardInput) {
+    fn process_key_bindings(&mut self, key: &KeyEvent) -> bool {
         let mode = BindingMode::new(self.ctx.terminal().mode(), self.ctx.search_active());
-        let mods = *self.ctx.modifiers();
+        let mods = self.ctx.modifiers().state();
+
+        // Don't suppress char if no bindings were triggered.
         let mut suppress_chars = None;
 
         for i in 0..self.ctx.config().key_bindings().len() {
             let binding = &self.ctx.config().key_bindings()[i];
 
-            let key = match (binding.trigger, input.virtual_keycode) {
-                (Key::Scancode(_), _) => Key::Scancode(input.scancode),
-                (_, Some(key)) => Key::Keycode(key),
-                _ => continue,
+            // We don't want the key without modifier, because it means something else most of
+            // the time. However what we want is to manually lowercase the character to account
+            // for both small and capital letters on regular characters at the same time.
+            let logical_key = if let Key::Character(ch) = key.logical_key.as_ref() {
+                Key::Character(ch.to_lowercase().into())
+            } else {
+                key.logical_key.clone()
+            };
+
+            let key = match (&binding.trigger, logical_key) {
+                (BindingKey::Scancode(_), _) => BindingKey::Scancode(key.physical_key),
+                (_, code) => BindingKey::Keycode { key: code, location: key.location },
             };
 
             if binding.is_triggered_by(mode, mods, &key) {
@@ -1046,31 +1148,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             }
         }
 
-        // Don't suppress char if no bindings were triggered.
-        *self.ctx.suppress_chars() = suppress_chars.unwrap_or(false);
-    }
-
-    /// Attempt to find a binding and execute its action.
-    ///
-    /// The provided mode, mods, and key must match what is allowed by a binding
-    /// for its action to be executed.
-    fn process_mouse_bindings(&mut self, button: MouseButton) {
-        let mode = BindingMode::new(self.ctx.terminal().mode(), self.ctx.search_active());
-        let mouse_mode = self.ctx.mouse_mode();
-        let mods = *self.ctx.modifiers();
-
-        for i in 0..self.ctx.config().mouse_bindings().len() {
-            let mut binding = self.ctx.config().mouse_bindings()[i].clone();
-
-            // Require shift for all modifiers when mouse mode is active.
-            if mouse_mode {
-                binding.mods |= ModifiersState::SHIFT;
-            }
-
-            if binding.is_triggered_by(mode, mods, &button) {
-                binding.action.execute(&mut self.ctx);
-            }
-        }
+        suppress_chars.unwrap_or(false)
     }
 
     /// Check mouse icon state in relation to the message bar.
@@ -1092,7 +1170,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         } else if mouse.y <= terminal_end + size.cell_height() as usize
             && point.column + message_bar::CLOSE_BUTTON_TEXT.len() >= size.columns()
         {
-            Some(CursorIcon::Hand)
+            Some(CursorIcon::Pointer)
         } else {
             Some(CursorIcon::Default)
         }
@@ -1110,8 +1188,8 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         if let Some(mouse_state) = self.message_bar_cursor_state() {
             mouse_state
         } else if self.ctx.display().highlighted_hint.as_ref().map_or(false, hint_highlighted) {
-            CursorIcon::Hand
-        } else if !self.ctx.modifiers().shift() && self.ctx.mouse_mode() {
+            CursorIcon::Pointer
+        } else if !self.ctx.modifiers().state().shift_key() && self.ctx.mouse_mode() {
             CursorIcon::Default
         } else {
             CursorIcon::Text
@@ -1158,7 +1236,8 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 mod tests {
     use super::*;
 
-    use winit::event::{DeviceId, Event as WinitEvent, VirtualKeyCode, WindowEvent};
+    use winit::event::{DeviceId, Event as WinitEvent, WindowEvent};
+    use winit::keyboard::Key;
     use winit::window::WindowId;
 
     use alacritty_terminal::event::Event as TerminalEvent;
@@ -1166,7 +1245,7 @@ mod tests {
     use crate::config::Binding;
     use crate::message_bar::MessageBuffer;
 
-    const KEY: VirtualKeyCode = VirtualKeyCode::Key0;
+    const KEY: Key<&'static str> = Key::Character("0");
 
     struct MockEventProxy;
     impl EventListener for MockEventProxy {}
@@ -1177,10 +1256,9 @@ mod tests {
         pub mouse: &'a mut Mouse,
         pub clipboard: &'a mut Clipboard,
         pub message_buffer: &'a mut MessageBuffer,
-        pub received_count: usize,
-        pub suppress_chars: bool,
-        pub modifiers: ModifiersState,
+        pub modifiers: Modifiers,
         config: &'a UiConfig,
+        inline_search_state: &'a mut InlineSearchState,
     }
 
     impl<'a, T: EventListener> super::ActionContext<T> for ActionContext<'a, T> {
@@ -1195,6 +1273,10 @@ mod tests {
 
         fn search_direction(&self) -> Direction {
             Direction::Right
+        }
+
+        fn inline_search_state(&mut self) -> &mut InlineSearchState {
+            self.inline_search_state
         }
 
         fn search_active(&self) -> bool {
@@ -1240,15 +1322,7 @@ mod tests {
             unimplemented!();
         }
 
-        fn received_count(&mut self) -> &mut usize {
-            &mut self.received_count
-        }
-
-        fn suppress_chars(&mut self) -> &mut bool {
-            &mut self.suppress_chars
-        }
-
-        fn modifiers(&mut self) -> &mut ModifiersState {
+        fn modifiers(&mut self) -> &mut Modifiers {
             &mut self.modifiers
         }
 
@@ -1317,6 +1391,7 @@ mod tests {
                     ..Mouse::default()
                 };
 
+                let mut inline_search_state = InlineSearchState::default();
                 let mut message_buffer = MessageBuffer::default();
 
                 let context = ActionContext {
@@ -1324,16 +1399,15 @@ mod tests {
                     mouse: &mut mouse,
                     size_info: &size,
                     clipboard: &mut clipboard,
-                    received_count: 0,
-                    suppress_chars: false,
                     modifiers: Default::default(),
                     message_buffer: &mut message_buffer,
+                    inline_search_state: &mut inline_search_state,
                     config: &cfg,
                 };
 
                 let mut processor = Processor::new(context);
 
-                let event: WinitEvent::<'_, TerminalEvent> = $input;
+                let event: WinitEvent::<TerminalEvent> = $input;
                 if let WinitEvent::WindowEvent {
                     event: WindowEvent::MouseInput {
                         state,
@@ -1379,7 +1453,6 @@ mod tests {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 device_id: unsafe { DeviceId::dummy() },
-                modifiers: ModifiersState::default(),
             },
             window_id: unsafe { WindowId::dummy() },
         },
@@ -1396,7 +1469,6 @@ mod tests {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,
                 device_id: unsafe { DeviceId::dummy() },
-                modifiers: ModifiersState::default(),
             },
             window_id: unsafe { WindowId::dummy() },
         },
@@ -1413,7 +1485,6 @@ mod tests {
                 state: ElementState::Pressed,
                 button: MouseButton::Middle,
                 device_id: unsafe { DeviceId::dummy() },
-                modifiers: ModifiersState::default(),
             },
             window_id: unsafe { WindowId::dummy() },
         },
@@ -1430,7 +1501,6 @@ mod tests {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 device_id: unsafe { DeviceId::dummy() },
-                modifiers: ModifiersState::default(),
             },
             window_id: unsafe { WindowId::dummy() },
         },
@@ -1447,7 +1517,6 @@ mod tests {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 device_id: unsafe { DeviceId::dummy() },
-                modifiers: ModifiersState::default(),
             },
             window_id: unsafe { WindowId::dummy() },
         },
@@ -1464,7 +1533,6 @@ mod tests {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 device_id: unsafe { DeviceId::dummy() },
-                modifiers: ModifiersState::default(),
             },
             window_id: unsafe { WindowId::dummy() },
         },
@@ -1481,7 +1549,6 @@ mod tests {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 device_id: unsafe { DeviceId::dummy() },
-                modifiers: ModifiersState::default(),
             },
             window_id: unsafe { WindowId::dummy() },
         },
@@ -1498,7 +1565,6 @@ mod tests {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,
                 device_id: unsafe { DeviceId::dummy() },
-                modifiers: ModifiersState::default(),
             },
             window_id: unsafe { WindowId::dummy() },
         },
@@ -1524,10 +1590,10 @@ mod tests {
 
     test_process_binding! {
         name: process_binding_nomode_controlmod,
-        binding: Binding { trigger: KEY, mods: ModifiersState::CTRL, action: Action::from("\x1b[1;5D"), mode: BindingMode::empty(), notmode: BindingMode::empty() },
+        binding: Binding { trigger: KEY, mods: ModifiersState::CONTROL, action: Action::from("\x1b[1;5D"), mode: BindingMode::empty(), notmode: BindingMode::empty() },
         triggers: true,
         mode: BindingMode::empty(),
-        mods: ModifiersState::CTRL,
+        mods: ModifiersState::CONTROL,
     }
 
     test_process_binding! {
@@ -1564,9 +1630,9 @@ mod tests {
 
     test_process_binding! {
         name: process_binding_fail_with_extra_mods,
-        binding: Binding { trigger: KEY, mods: ModifiersState::LOGO, action: Action::from("arst"), mode: BindingMode::empty(), notmode: BindingMode::empty() },
+        binding: Binding { trigger: KEY, mods: ModifiersState::SUPER, action: Action::from("arst"), mode: BindingMode::empty(), notmode: BindingMode::empty() },
         triggers: false,
         mode: BindingMode::empty(),
-        mods: ModifiersState::ALT | ModifiersState::LOGO,
+        mods: ModifiersState::ALT | ModifiersState::SUPER,
     }
 }

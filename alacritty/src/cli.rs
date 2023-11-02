@@ -1,5 +1,4 @@
 use std::cmp::max;
-use std::os::raw::c_ulong;
 use std::path::PathBuf;
 
 use clap::{ArgAction, Args, Parser, Subcommand, ValueHint};
@@ -149,10 +148,10 @@ fn parse_class(input: &str) -> Result<Class, String> {
 }
 
 /// Convert to hex if possible, else decimal
-fn parse_hex_or_decimal(input: &str) -> Option<c_ulong> {
+fn parse_hex_or_decimal(input: &str) -> Option<u32> {
     input
         .strip_prefix("0x")
-        .and_then(|value| c_ulong::from_str_radix(value, 16).ok())
+        .and_then(|value| u32::from_str_radix(value, 16).ok())
         .or_else(|| input.parse().ok())
 }
 
@@ -297,6 +296,11 @@ pub struct WindowOptions {
     #[clap(flatten)]
     /// Window options which could be passed via IPC.
     pub window_identity: WindowIdentity,
+
+    #[clap(skip)]
+    #[cfg(target_os = "macos")]
+    /// The window tabbing identifier to use when building a window.
+    pub window_tabbing_id: Option<String>,
 }
 
 /// Parameters to the `config` IPC subcommand.

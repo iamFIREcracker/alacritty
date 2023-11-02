@@ -7,7 +7,7 @@ Alacritty - TOML configuration file format
 # SYNTAX
 
 Alacritty's configuration file uses the TOML format. The format's specification
-can be found at https://toml.io/en/v1.0.0.
+can be found at _https://toml.io/en/v1.0.0_.
 
 # GENERAL
 
@@ -24,12 +24,32 @@ This section documents the root level of the configuration file.
 	All imports must either be absolute paths starting with _/_, or paths
 	relative to the user's home directory starting with _~/_.
 
+	Example:
+		import = [++
+	_"~/.config/alacritty/base16-dark.toml"_,++
+	_"~/.config/alacritty/keybindings.toml"_,++
+]
+
+*shell* <string> | { program = <string>, args = [<string>,] }
+
+	You can set _shell.program_ to the path of your favorite shell, e.g.
+	_/bin/zsh_. Entries in _shell.args_ are passed as arguments to the shell.
+
+	Default:
+		Linux/BSD/macOS: _$SHELL_ or the user's login shell, if _$SHELL_ is unset++
+Windows: _"powershell"_
+
+	Example:
+		*[shell]*++
+program = _"/bin/zsh"_++
+args = [_"-l"_]
+
 *working_directory* <string> | "None"
 
-	Directory the shell is started in. When this is unset, or _None_, the
+	Directory the shell is started in. When this is unset, or _"None"_, the
 	working directory of the parent process will be used.
 
-	Default: _None_
+	Default: _"None"_
 
 *live_config_reload* <boolean>
 
@@ -49,10 +69,9 @@ All key-value pairs in the *env* section will be added as environment variables
 for any process spawned by Alacritty, including its shell. Some entries may
 override variables set by alacritty itself.
 
-```
-[env]
-TERM = "alacritty"
-```
+Example:
+	*[env]*++
+WINIT_X11_SCALE_FACTOR = _"1.0"_
 
 # WINDOW
 
@@ -68,6 +87,16 @@ This section documents the *[window]* table of the configuration file.
 	to the window manager's recommended size
 
 	Default: _{ column = 0, lines = 0 }_
+
+*position* "None" | { x = <integer>, y = <integer> }
+
+	Window startup position
+
+	Specified in number of pixels.
+
+	If the position is _"None"_, the window manager will handle placement.
+
+	Default: _"None"_
 
 *padding* { x = <integer>, y = <integer> }
 
@@ -104,6 +133,12 @@ This section documents the *[window]* table of the configuration file.
 
 	Default: _1.0_
 
+*blur* <boolean> _(works on macOS/KDE Wayland)_
+
+	Request compositor to blur content behind transparent windows.
+
+	Default: _false_
+
 *startup_mode* "Windowed" | "Maximized" | "Fullscreen" | "SimpleFullscreen"
 
 	Startup mode (changes require restart)
@@ -130,7 +165,7 @@ This section documents the *[window]* table of the configuration file.
 
 	Default: _{ instance = "Alacritty", general = "Alacritty" }_
 
-*decoration_theme_variant* "Dark" | "Light" | "None"
+*decorations_theme_variant* "Dark" | "Light" | "None"
 
 	Override the variant of the System theme/GTK theme/Wayland client side
 	decorations. Set this to _"None"_ to use the system's default theme variant.
@@ -490,12 +525,12 @@ This section documents the *[cursor]* table of the configuration file.
 
 *vi_mode_style*
 
-	If the vi mode cursor style is _None_ or not specified, it will fall back to
+	If the vi mode cursor style is _"None"_ or not specified, it will fall back to
 	the active value of the normal cursor.
 
 	See _cursor.style_ for available options.
 
-	Default: _None_
+	Default: _"None"_
 
 *blink_interval* <integer>
 
@@ -525,14 +560,19 @@ This section documents the *[cursor]* table of the configuration file.
 
 	Default: _0.15_
 
-*shell* <string> | { program = <string>, args = [<string>,] }
+# Terminal
 
-	You can set _shell.program_ to the path of your favorite shell, e.g.
-	_/bin/zsh_. Entries in _shell.args_ are passed as arguments to the shell.
+This section documents the *[terminal]* table of the configuration file.
 
-	Default:
-		Linux/BSD/macOS: _$SHELL_ or the user's login shell, if _$SHELL_ is unset++
-Windows: _"powershell"_
+*osc52* "Disabled" | "OnlyCopy" | "OnlyPaste" | "CopyPaste"
+
+	Controls the ability to write to the system clipboard with the _OSC 52_
+	escape sequence. While this escape sequence is useful to copy contents
+	from the remote server, allowing any application to read from the clipboard
+	can be easily abused while not providing significant benefits over
+	explicitly pasting text.
+
+	Default: _"OnlyCopy"_
 
 # Mouse
 
@@ -543,6 +583,31 @@ This section documents the *[mouse]* table of the configuration file.
 	When this is _true_, the cursor is temporarily hidden when typing.
 
 	Default: _false_
+
+*bindings*: [{ <mouse>, <mods>, <mode>, <action> | chars = <string> },]
+
+	See _keyboard.bindings_ for full documentation on _mods_, _mode_, _action_,
+	and _chars_.
+
+	When an application running within Alacritty captures the mouse, the `Shift`
+	modifier can be used to suppress mouse reporting. If no action is found for
+	the event, actions for the event without the `Shift` modifier are triggered
+	instead.
+
+	*mouse* "Middle" | "Left" | "Right" | "Back" | "Forward" | <number>
+
+		Mouse button which needs to be pressed to trigger this binding.
+
+	*action* <keyboard.bindings.action> | "ExpandSelection"
+
+		*ExpandSelection*
+			Expand the selection to the current mouse cursor location.
+
+	Example:
+		*[mouse]*++
+bindings = [++
+	{ mouse = _"Right"_, mods = _"Control"_, action = _"Paste"_ },++
+]
 
 # Hints
 
@@ -603,20 +668,20 @@ _action_ or a _command_.
 
 	*binding* { key = <string>, mods = <string>, mode = <string> }
 
-		See _key_bindings_ for documentation on available values.
+		See _keyboard.bindings_ for documentation on available values.
 
 		This controls which key binding is used to start the keyboard hint
 		selection process.
 
 	*mouse* { mods = <string>, enabled = <boolean> }
 
-		See _key_bindings_ for documentation on available _mods_.
+		See _keyboard.bindings_ for documentation on available _mods_.
 
 		The _enabled_ field controls if the hint should be underlined when
 		hovering over the hint text with all _mods_ pressed.
 
 Default: _[{
-	regex = "(mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)[^\\u0000-\\u001F\\u007F-\\u009F<>\\"\\\\s{-}\\\\^⟨⟩`]+",++
+	regex = "(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file:|git://|ssh:|ftp://)[^\\u0000-\\u001F\\u007F-\\u009F<>\\"\\\\s{-}\\\\^⟨⟩`]+",++
 hyperlinks = true,++
 post_processing = true,++
 persist = false,++
@@ -624,30 +689,11 @@ mouse = { enabled = true },++
 binding = { key = "U", mods = "Control | Shift" },
 }]_
 
-# Bindings
+# Keyboard
 
-This section documents the *mouse_bindings* and *key_bindings* at the root level
-of the configuration file.
+This section documents the *[keyboard]* table of the configuration file.
 
-*mouse_bindings* [{ <mouse>, <mods>, <mode>, <action> | chars = <string> },]
-
-	See _key_bindings_ for full documentation on _mods_, _mode_, _action_, and
-	_chars_.
-
-	To trigger mouse bindings when an application running within Alacritty
-	captures the mouse, the `Shift` modifier is automatically added as a
-	requirement.
-
-	*mouse* "Middle" | "Left" | "Right" | <number>
-
-		Mouse button which needs to be pressed to trigger this binding.
-
-	*action* <key_bindings.action> | "ExpandSelection"
-
-		*ExpandSelection*
-			Expand the selection to the current mouse cursor location.
-
-*key_bindings* [{ <key>, <mods>, <mode>, <action> | chars = <string> },]
+*bindings*: [{ <key>, <mods>, <mode>, <action> | chars = <string> },]
 
 	To unset a default binding, you can use the action _"ReceiveChar"_ to remove
 	it or _"None"_ to inhibit any action.
@@ -657,11 +703,16 @@ of the configuration file.
 
 	*key* <string>
 
-		Identifier of the binding's key, for example: _"A"_, _"F1"_, or
-		_"Key0"_.
+		The regular keys like _"A"_, _"0"_, and _"Я"_ can be mapped directly
+		without any special syntax. Full list of named keys like _"F1"_ and the
+		syntax for dead keys can be found here:
 
-		A full list with available key codes can be found here:++
-https://docs.rs/winit/\*/winit/event/enum.VirtualKeyCode.html#variants
+		https://docs.rs/winit/latest/winit/keyboard/enum.NamedKey.html++
+https://docs.rs/winit/latest/winit/keyboard/enum.Key.html#variant.Dead
+
+		Numpad keys are prefixed by _Numpad_: "NumpadEnter" | "NumpadAdd" |
+		"NumpadComma" | "NumpadDivide" | "NumpadEquals" | "NumpadSubtract" |
+		"NumpadMultiply" | "Numpad[0-9]".
 
 		The _key_ field also supports using scancodes, which are specified as a
 		decimal number.
@@ -687,14 +738,73 @@ https://docs.rs/winit/\*/winit/event/enum.VirtualKeyCode.html#variants
 
 	*action*
 
+		*ReceiveChar*
+			Allow receiving char input.
+		*None*
+			No action.
+		*Paste*
+			Paste contents of system clipboard.
+		*Copy*
+			Store current selection into clipboard.
+		*IncreaseFontSize*
+			Increase font size.
+		*DecreaseFontSize*
+			Decrease font size.
+		*ResetFontSize*
+			Reset font size to the config value.
+		*ScrollPageUp*
+			Scroll exactly one page up.
+		*ScrollPageDown*
+			Scroll exactly one page down.
+		*ScrollHalfPageUp*
+			Scroll half a page up.
+		*ScrollHalfPageDown*
+			Scroll half a page down.
+		*ScrollLineUp*
+			Scroll one line up.
+		*ScrollLineDown*
+			Scroll one line down.
+		*ScrollToTop*
+			Scroll all the way to the top.
+		*ScrollToBottom*
+			Scroll all the way to the bottom.
+		*ClearHistory*
+			Clear the display buffer(s) to remove history.
+		*Hide*
+			Hide the Alacritty window.
+		*Minimize*
+			Minimize the Alacritty window.
+		*Quit*
+			Quit Alacritty.
+		*ClearLogNotice*
+			Clear warning and error notices.
+		*SpawnNewInstance*
+			Spawn a new instance of Alacritty.
+		*CreateNewWindow*
+			Create a new Alacritty window.
+		*ToggleFullscreen*
+			Toggle fullscreen.
+		*ToggleMaximized*
+			Toggle maximized.
+		*ClearSelection*
+			Clear active selection.
+		*ToggleViMode*
+			Toggle vi mode.
+		*SearchForward*
+			Start a forward buffer search.
+		*SearchBackward*
+			Start a backward buffer search.
+
+		_Vi mode actions:_
+
 		*Up*
-			One line up.
+			Move up.
 		*Down*
-			One line down.
+			Move down.
 		*Left*
-			One character left.
+			Move left.
 		*Right*
-			One character right.
+			Move right.
 		*First*
 			First column, or beginning of the line when already at the first column.
 		*Last*
@@ -703,46 +813,72 @@ https://docs.rs/winit/\*/winit/event/enum.VirtualKeyCode.html#variants
 			First non-empty cell in this terminal row, or first non-empty cell
 			of the line when already at the first cell of the row.
 		*High*
-			Top of the screen.
+			Move to top of screen.
 		*Middle*
-			Center of the screen.
+			Move to center of screen.
 		*Low*
-			Bottom of the screen.
+			Move to bottom of screen.
 		*SemanticLeft*
-			the previous semantically separated word.
+			Move to start of semantically separated word.
 		*SemanticRight*
-			he next semantically separated word.
+			Move to start of next semantically separated word.
 		*SemanticLeftEnd*
-			revious semantically separated word.
+			Move to end of previous semantically separated word.
 		*SemanticRightEnd*
-			End of the next semantically separated word.
+			Move to end of semantically separated word.
 		*WordLeft*
-			Start of the previous whitespace separated word.
+			Move to start of whitespace separated word.
 		*WordRight*
-			Start of the next whitespace separated word.
+			Move to start of next whitespace separated word.
 		*WordLeftEnd*
-			End of the previous whitespace separated word.
+			Move to end of previous whitespace separated word.
 		*WordRightEnd*
-			End of the next whitespace separated word.
+			Move to end of whitespace separated word.
 		*Bracket*
-			Character matching the bracket at the cursor's location.
+			Move to opposing bracket.
+		*ToggleNormalSelection*
+			Toggle normal vi selection.
+		*ToggleLineSelection*
+			Toggle line vi selection.
+		*ToggleBlockSelection*
+			Toggle block vi selection.
+		*ToggleSemanticSelection*
+			Toggle semantic vi selection.
 		*SearchNext*
-			Beginning of the next match.
+			Jump to the beginning of the next match.
 		*SearchPrevious*
-			Beginning of the previous match.
+			Jump to the beginning of the previous match.
 		*SearchStart*
-			Start of the match to the left of the vi mode cursor.
+			Jump to the next start of a match to the left of the origin.
 		*SearchEnd*
-			End of the match to the right of the vi mode cursor.
+			Jump to the next end of a match to the right of the origin.
+		*Open*
+			Launch the URL below the vi mode cursor.
+		*CenterAroundViCursor*
+			Centers the screen around the vi mode cursor.
+		*InlineSearchForward*
+			Search forward within the current line.
+		*InlineSearchBcakward*
+			Search backward within the current line.
+		*InlineSearchForwardShort*
+			Search forward within the current line, stopping just short of the character.
+		*InlineSearchBackwardShort*
+			Search backward within the current line, stopping just short of the character.
+		*InlineSearchNext*
+			Jump to the next inline search match.
+		*InlineSearchPrevious*
+			Jump to the previous inline search match.
 
-		_Search mode exclusive:_
+		_Search actions:_
 
 		*SearchFocusNext*
 			Move the focus to the next search match.
 		*SearchFocusPrevious*
 			Move the focus to the previous search match.
 		*SearchConfirm*
+			Confirm the active search.
 		*SearchCancel*
+			Cancel the active search.
 		*SearchClear*
 			Reset the search regex.
 		*SearchDeleteWord*
@@ -756,6 +892,34 @@ https://docs.rs/winit/\*/winit/event/enum.VirtualKeyCode.html#variants
 
 		*ToggleSimpleFullscreen*
 			Enter fullscreen without occupying another space.
+		*HideOtherApplications*
+			Hide all windows other than Alacritty.
+		*CreateNewTab*
+			Create new window in a tab.
+		*SelectNextTab*
+			Select next tab.
+		*SelectPreviousTab*
+			Select previous tab.
+		*SelectTab1*
+			Select the first tab.
+		*SelectTab2*
+			Select the second tab.
+		*SelectTab3*
+			Select the third tab.
+		*SelectTab4*
+			Select the fourth tab.
+		*SelectTab5*
+			Select the fifth tab.
+		*SelectTab6*
+			Select the sixth tab.
+		*SelectTab7*
+			Select the seventh tab.
+		*SelectTab8*
+			Select the eighth tab.
+		*SelectTab9*
+			Select the ninth tab.
+		*SelectLastTab*
+			Select the last tab.
 
 		_Linux/BSD exclusive:_
 
@@ -765,6 +929,13 @@ https://docs.rs/winit/\*/winit/event/enum.VirtualKeyCode.html#variants
 			Paste from the selection buffer.
 
 Default: See *alacritty-bindings*(5)
+
+Example:
+	*[keyboard]*++
+bindings = [++
+	{ key = _"N"_, mods = _"Control|Shift"_, action = _"CreateNewWindow"_ },++
+]
+
 
 # Debug
 
@@ -790,6 +961,12 @@ relied upon.
 
 	Default: _"Warn"_
 
+	To add extra libraries to logging _ALACRITTY_EXTRA_LOG_TARGETS_ variable
+	can be used.
+
+	Example:
+		_ALACRITTY_EXTRA_LOG_TARGETS="winit;vte" alacritty -vvv_
+
 *renderer* "glsl3" | "gles2" | "gles2_pure" | "None"
 
 	Force use of a specific renderer, _"None"_ will use the highest available
@@ -806,6 +983,13 @@ relied upon.
 *highlight_damage* <boolean>
 
 	Highlight window damage information.
+
+	Default: _false_
+
+*prefer_egl* <boolean>
+
+	Use EGL as display API if the current platform allows it. Note that
+	transparency may not work with EGL on Linux/BSD.
 
 	Default: _false_
 

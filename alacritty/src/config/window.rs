@@ -1,5 +1,4 @@
 use std::fmt::{self, Formatter};
-use std::os::raw::c_ulong;
 
 use log::{error, warn};
 use serde::de::{self, MapAccess, Visitor};
@@ -7,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use winit::window::{Fullscreen, Theme};
 
 #[cfg(target_os = "macos")]
-use winit::platform::macos::OptionAsAlt;
+use winit::platform::macos::OptionAsAlt as WinitOptionAsAlt;
 
 use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 use alacritty_terminal::config::{Percentage, LOG_TARGET_CONFIG};
@@ -31,7 +30,7 @@ pub struct WindowConfig {
 
     /// XEmbed parent.
     #[config(skip)]
-    pub embed: Option<c_ulong>,
+    pub embed: Option<u32>,
 
     /// System decorations theme variant.
     pub decorations_theme_variant: Option<Theme>,
@@ -49,15 +48,18 @@ pub struct WindowConfig {
     /// Background opacity from 0.0 to 1.0.
     pub opacity: Percentage,
 
+    /// Request blur behind the window.
+    pub blur: bool,
+
     /// Controls which `Option` key should be treated as `Alt`.
     #[cfg(target_os = "macos")]
-    pub option_as_alt: OptionAsAlt,
+    option_as_alt: OptionAsAlt,
 
     /// Resize increments.
     pub resize_increments: bool,
 
     /// Pixel padding.
-    padding: Delta<u8>,
+    padding: Delta<u16>,
 
     /// Initial dimensions.
     dimensions: Dimensions,
@@ -67,17 +69,18 @@ impl Default for WindowConfig {
     fn default() -> Self {
         Self {
             dynamic_title: true,
+            blur: Default::default(),
+            embed: Default::default(),
+            padding: Default::default(),
+            opacity: Default::default(),
             position: Default::default(),
+            identity: Default::default(),
+            dimensions: Default::default(),
             decorations: Default::default(),
             startup_mode: Default::default(),
-            embed: Default::default(),
-            decorations_theme_variant: Default::default(),
             dynamic_padding: Default::default(),
-            identity: Identity::default(),
-            opacity: Default::default(),
-            padding: Default::default(),
-            dimensions: Default::default(),
             resize_increments: Default::default(),
+            decorations_theme_variant: Default::default(),
             #[cfg(target_os = "macos")]
             option_as_alt: Default::default(),
         }
@@ -136,6 +139,16 @@ impl WindowConfig {
     #[inline]
     pub fn maximized(&self) -> bool {
         self.startup_mode == StartupMode::Maximized
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn option_as_alt(&self) -> WinitOptionAsAlt {
+        match self.option_as_alt {
+            OptionAsAlt::OnlyLeft => WinitOptionAsAlt::OnlyLeft,
+            OptionAsAlt::OnlyRight => WinitOptionAsAlt::OnlyRight,
+            OptionAsAlt::Both => WinitOptionAsAlt::Both,
+            OptionAsAlt::None => WinitOptionAsAlt::None,
+        }
     }
 }
 
@@ -262,4 +275,21 @@ impl<'de> Deserialize<'de> for Class {
 
         deserializer.deserialize_any(ClassVisitor)
     }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(ConfigDeserialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionAsAlt {
+    /// The left `Option` key is treated as `Alt`.
+    OnlyLeft,
+
+    /// The right `Option` key is treated as `Alt`.
+    OnlyRight,
+
+    /// Both `Option` keys are treated as `Alt`.
+    Both,
+
+    /// No special handling is applied for `Option` key.
+    #[default]
+    None,
 }

@@ -153,7 +153,7 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :  _"Alt"_
 :  _"Vi|~Search"_
 :  _"ToggleSemanticSelection"_
-|  _"Return"_
+|  _"Enter"_
 :[
 :  _"Vi|~Search"_
 :  _"Open"_
@@ -161,6 +161,30 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :[
 :  _"Vi|~Search"_
 :  _"CenterAroundViCursor"_
+|  _"F"_
+:[
+:  _"Vi|~Search"_
+:  _"InlineSearchForward"_
+|  _"F"_
+:  _"Shift"_
+:  _"Vi|~Search"_
+:  _"InlineSearchBackward"_
+|  _"T"_
+:[
+:  _"Vi|~Search"_
+:  _"InlineSearchForwardShort"_
+|  _"T"_
+:  _"Shift"_
+:  _"Vi|~Search"_
+:  _"InlineSearchBackwardShort"_
+|  _";"_
+:[
+:  _"Vi|~Search"_
+:  _"InlineSearchNext"_
+|  _","_
+:[
+:  _"Vi|~Search"_
+:  _"InlineSearchPrevious"_
 |  _"K"_
 :[
 :  _"Vi|~Search"_
@@ -177,31 +201,31 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :[
 :  _"Vi|~Search"_
 :  _"Right"_
-|  _"Up"_
+|  _"ArrowUp"_
 :[
 :  _"Vi|~Search"_
 :  _"Up"_
-|  _"Down"_
+|  _"ArrowDown"_
 :[
 :  _"Vi|~Search"_
 :  _"Down"_
-|  _"Left"_
+|  _"ArrowLeft"_
 :[
 :  _"Vi|~Search"_
 :  _"Left"_
-|  _"Right"_
+|  _"ArrowRight"_
 :[
 :  _"Vi|~Search"_
 :  _"Right"_
-|  _"Key0"_
+|  _"0"_
 :[
 :  _"Vi|~Search"_
 :  _"First"_
-|  _"Key4"_
+|  _"$"_
 :  _"Shift"_
 :  _"Vi|~Search"_
 :  _"Last"_
-|  _"Key6"_
+|  _"^"_
 :  _"Shift"_
 :  _"Vi|~Search"_
 :  _"FirstOccupied"_
@@ -241,15 +265,15 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :  _"Shift"_
 :  _"Vi|~Search"_
 :  _"WordRightEnd"_
-|  _"Key5"_
+|  _"%"_
 :  _"Shift"_
 :  _"Vi|~Search"_
 :  _"Bracket"_
-|  _"Slash"_
+|  _"/"_
 :[
 :  _"Vi|~Search"_
 :  _"SearchForward"_
-|  _"Slash"_
+|  _"/"_
 :  _"Shift"_
 :  _"Vi|~Search"_
 :  _"SearchBackward"_
@@ -269,7 +293,7 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :[ *mods*
 :[ *mode*
 :[ *action*
-|  _"Return"_
+|  _"Enter"_
 :[
 :  _"Search|Vi"_
 :  _"SearchConfirm"_
@@ -297,15 +321,15 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :  _"Control"_
 :  _"Search"_
 :  _"SearchHistoryNext"_
-|  _"Up"_
+|  _"ArrowUp"_
 :[
 :  _"Search"_
 :  _"SearchHistoryPrevious"_
-|  _"Down"_
+|  _"ArrowDown"_
 :[
 :  _"Search"_
 :  _"SearchHistoryNext"_
-|  _"Return"_
+|  _"Enter"_
 :[
 :  _"Search|~Vi"_
 :  _"SearchFocusNext"_
@@ -340,15 +364,15 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :  _"Shift"_
 :[
 :  _"PasteSelection"_
-|  _"Key0"_
+|  _"0"_
 :  _"Control"_
 :[
 :  _"ResetFontSize"_
-|  _"Equals"_
+|  _"="_
 :  _"Control"_
 :[
 :  _"IncreaseFontSize"_
-|  _"Plus"_
+|  _"+"_
 :  _"Control"_
 :[
 :  _"IncreaseFontSize"_
@@ -356,7 +380,7 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :  _"Control"_
 :[
 :  _"IncreaseFontSize"_
-|  _"Minus"_
+|  _"-"_
 :  _"Control"_
 :[
 :  _"DecreaseFontSize"_
@@ -371,7 +395,7 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :[ *mods*
 :[ *mode*
 :[ *action*
-|  _"Return"_
+|  _"Enter"_
 :  _"Alt"_
 :[
 :  _"ToggleFullscreen"_
@@ -390,15 +414,15 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :  _"Command"_
 :  _"~Vi|~Search"_
 :  _"ClearHistory"_
-|  _"Key0"_
+|  _"0"_
 :  _"Command"_
 :[
 :  _"ResetFontSize"_
-|  _"Equals"_
+|  _"="_
 :  _"Command"_
 :[
 :  _"IncreaseFontSize"_
-|  _"Plus"_
+|  _"+"_
 :  _"Command"_
 :[
 :  _"IncreaseFontSize"_
@@ -406,7 +430,7 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :  _"Command"_
 :[
 :  _"IncreaseFontSize"_
-|  _"Minus"_
+|  _"-"_
 :  _"Command"_
 :[
 :  _"DecreaseFontSize"_
@@ -450,6 +474,10 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :  _"Command"_
 :[
 :  _"CreateNewWindow"_
+|  _"T"_
+:  _"Command"_
+:[
+:  _"CreateNewTab"_
 |  _"F"_
 :  _"Command|Control"_
 :[
@@ -462,6 +490,58 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 :  _"Command"_
 :  _"~Search"_
 :  _"SearchBackward"_
+|  _"]"_
+:  _"Command|Shift"_
+:[
+:  _"SelectNextTab"_
+|  _"["_
+:  _"Command|Shift"_
+:[
+:  _"SelectPreviousTab"_
+|  _"Tab"_
+:  _"Command"_
+:[
+:  _"SelectNextTab"_
+|  _"Tab"_
+:  _"Command|Shift"_
+:[
+:  _"SelectPreviousTab"_
+|  _"1"_
+:  _"Command"_
+:[
+:  _"SelectTab1"_
+|  _"2"_
+:  _"Command"_
+:[
+:  _"SelectTab2"_
+|  _"3"_
+:  _"Command"_
+:[
+:  _"SelectTab3"_
+|  _"4"_
+:  _"Command"_
+:[
+:  _"SelectTab4"_
+|  _"5"_
+:  _"Command"_
+:[
+:  _"SelectTab5"_
+|  _"6"_
+:  _"Command"_
+:[
+:  _"SelectTab6"_
+|  _"7"_
+:  _"Command"_
+:[
+:  _"SelectTab7"_
+|  _"8"_
+:  _"Command"_
+:[
+:  _"SelectTab8"_
+|  _"2 9"_
+:  _"Command"_
+:[
+:  _"SelectLastTab"_
 
 # SEE ALSO
 

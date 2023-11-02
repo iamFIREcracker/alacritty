@@ -6,7 +6,6 @@ use std::fmt::{self, Formatter};
 use std::mem::{self, ManuallyDrop};
 use std::num::NonZeroU32;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use glutin::context::{NotCurrentContext, PossiblyCurrentContext};
@@ -15,9 +14,10 @@ use glutin::surface::{Rect as DamageRect, Surface, SwapInterval, WindowSurface};
 
 use log::{debug, info};
 use parking_lot::MutexGuard;
+use raw_window_handle::RawWindowHandle;
 use serde::{Deserialize, Serialize};
 use winit::dpi::PhysicalSize;
-use winit::event::ModifiersState;
+use winit::keyboard::ModifiersState;
 use winit::window::CursorIcon;
 
 use crossfont::{self, Rasterize, Rasterizer};
@@ -346,7 +346,7 @@ pub struct Display {
     /// Hint highlighted by the vi mode cursor.
     pub vi_highlighted_hint: Option<HintMatch>,
 
-    pub is_wayland: bool,
+    pub raw_window_handle: RawWindowHandle,
 
     /// UI cursor visibility for blinking.
     pub cursor_hidden: bool,
@@ -392,11 +392,9 @@ impl Display {
         window: Window,
         gl_context: NotCurrentContext,
         config: &UiConfig,
+        _tabbed: bool,
     ) -> Result<Display, Error> {
-        #[cfg(any(not(feature = "wayland"), target_os = "macos", windows))]
-        let is_wayland = false;
-        #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
-        let is_wayland = window.wayland_surface().is_some();
+        let raw_window_handle = window.raw_window_handle();
 
         let scale_factor = window.scale_factor as f32;
         let rasterizer = Rasterizer::new(scale_factor)?;
@@ -410,7 +408,7 @@ impl Display {
         // Resize the window to account for the user configured size.
         if let Some(dimensions) = config.window.dimensions() {
             let size = window_size(config, dimensions, cell_width, cell_height, scale_factor);
-            window.set_inner_size(size);
+            window.request_inner_size(size);
         }
 
         // Create the GL surface to draw into.
@@ -461,9 +459,10 @@ impl Display {
         #[cfg(target_os = "macos")]
         window.set_has_shadow(config.window_opacity() >= 1.0);
 
+        let is_wayland = matches!(raw_window_handle, RawWindowHandle::Wayland(_));
+
         // On Wayland we can safely ignore this call, since the window isn't visible until you
         // actually draw something into it and commit those changes.
-        #[cfg(not(any(target_os = "macos", windows)))]
         if !is_wayland {
             surface.swap_buffers(&context).expect("failed to swap buffers.");
             renderer.finish();
@@ -478,12 +477,13 @@ impl Display {
 
         #[allow(clippy::single_match)]
         #[cfg(not(windows))]
-        match config.window.startup_mode {
-            #[cfg(target_os = "macos")]
-            StartupMode::SimpleFullscreen => window.set_simple_fullscreen(true),
-            #[cfg(not(any(target_os = "macos", windows)))]
-            StartupMode::Maximized if !is_wayland => window.set_maximized(true),
-            _ => (),
+        if !_tabbed {
+            match config.window.startup_mode {
+                #[cfg(target_os = "macos")]
+                StartupMode::SimpleFullscreen => window.set_simple_fullscreen(true),
+                StartupMode::Maximized if !is_wayland => window.set_maximized(true),
+                _ => (),
+            }
         }
 
         let hint_state = HintState::new(config.hints.alphabet());
@@ -513,7 +513,6 @@ impl Display {
             ime: Ime::new(),
             highlighted_hint: None,
             vi_highlighted_hint: None,
-            is_wayland,
             cursor_hidden: false,
             frame_timer: FrameTimer::new(),
             visual_bell: VisualBell::from(&config.bell),
@@ -522,6 +521,7 @@ impl Display {
             pending_renderer_update: Default::default(),
             debug_damage,
             damage_rects,
+            raw_window_handle,
             next_frame_damage_rects,
             hint_mouse_point: None,
         })
@@ -554,7 +554,8 @@ impl Display {
         let res = match (self.surface.deref(), &self.context.get()) {
             #[cfg(not(any(target_os = "macos", windows)))]
             (Surface::Egl(surface), PossiblyCurrentContext::Egl(context))
-                if self.is_wayland && !self.debug_damage =>
+                if matches!(self.raw_window_handle, RawWindowHandle::Wayland(_))
+                    && !self.debug_damage =>
             {
                 surface.swap_buffers_with_damage(context, &self.damage_rects)
             },
@@ -589,7 +590,7 @@ impl Display {
     }
 
     // XXX: this function must not call to any `OpenGL` related tasks. Renderer updates are
-    // performed in [`Self::process_renderer_update`] right befor drawing.
+    // performed in [`Self::process_renderer_update`] right before drawing.
     //
     /// Process update events.
     pub fn handle_update<T>(
@@ -761,7 +762,7 @@ impl Display {
         scheduler: &mut Scheduler,
         message_buffer: &MessageBuffer,
         config: &UiConfig,
-        search_state: &SearchState,
+        search_state: &mut SearchState,
     ) {
         // Collect renderable content before the terminal is dropped.
         let mut content = RenderableContent::new(config, self, &terminal, search_state);
@@ -974,17 +975,13 @@ impl Display {
             self.draw_hyperlink_preview(config, cursor_point, display_offset);
         }
 
-        // Frame event should be requested before swapping buffers on Wayland, since it requires
-        // surface `commit`, which is done by swap buffers under the hood.
-        if self.is_wayland {
-            self.request_frame(scheduler);
-        }
+        // Notify winit that we're about to present.
+        self.window.pre_present_notify();
 
         // Clearing debug highlights from the previous frame requires full redraw.
         self.swap_buffers();
 
-        #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-        if !self.is_wayland {
+        if matches!(self.raw_window_handle, RawWindowHandle::Xcb(_) | RawWindowHandle::Xlib(_)) {
             // On X11 `swap_buffers` does not block for vsync. However the next OpenGl command
             // will block to synchronize (this is `glClear` in Alacritty), which causes a
             // permanent one frame delay.
@@ -993,7 +990,7 @@ impl Display {
 
         // XXX: Request the new frame after swapping buffers, so the
         // time to finish OpenGL operations is accounted for in the timeout.
-        if !self.is_wayland {
+        if !matches!(self.raw_window_handle, RawWindowHandle::Wayland(_)) {
             self.request_frame(scheduler);
         }
 
@@ -1048,7 +1045,7 @@ impl Display {
             // highlighted hint could be disrupted by the old preview.
             dirty = self.hint_mouse_point.map_or(false, |p| p.line != point.line);
             self.hint_mouse_point = Some(point);
-            self.window.set_mouse_cursor(CursorIcon::Hand);
+            self.window.set_mouse_cursor(CursorIcon::Pointer);
         } else if self.highlighted_hint.is_some() {
             self.hint_mouse_point = None;
             if term.mode().intersects(TermMode::MOUSE_MODE) && !term.mode().contains(TermMode::VI) {
@@ -1366,7 +1363,7 @@ impl Display {
     /// Returns `true` if damage information should be collected, `false` otherwise.
     #[inline]
     fn collect_damage(&self) -> bool {
-        self.is_wayland || self.debug_damage
+        matches!(self.raw_window_handle, RawWindowHandle::Wayland(_)) || self.debug_damage
     }
 
     /// Highlight damaged rects.
@@ -1384,21 +1381,10 @@ impl Display {
         }
     }
 
-    /// Requst a new frame for a window on Wayland.
+    /// Request a new frame for a window on Wayland.
     fn request_frame(&mut self, scheduler: &mut Scheduler) {
         // Mark that we've used a frame.
-        self.window.has_frame.store(false, Ordering::Relaxed);
-
-        #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
-        if let Some(surface) = self.window.wayland_surface() {
-            let has_frame = self.window.has_frame.clone();
-            // Request a new frame.
-            surface.frame().quick_assign(move |_, _, _| {
-                has_frame.store(true, Ordering::Relaxed);
-            });
-
-            return;
-        }
+        self.window.has_frame = false;
 
         // Get the display vblank interval.
         let monitor_vblank_interval = 1_000_000.
@@ -1425,7 +1411,7 @@ impl Display {
 impl Drop for Display {
     fn drop(&mut self) {
         // Switch OpenGL context before dropping, otherwise objects (like programs) from other
-        // contexts might be deleted during droping renderer.
+        // contexts might be deleted when dropping renderer.
         self.make_current();
         unsafe {
             ManuallyDrop::drop(&mut self.renderer);

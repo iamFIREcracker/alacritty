@@ -42,7 +42,7 @@ and
 [easy](https://github.com/alacritty/alacritty/issues?q=is%3Aopen+is%3Aissue+label%3A%22D+-+easy%22)
 issues.
 
-Please note that the minimum supported version of Alacritty is Rust 1.65.0. All patches are expected
+Please note that the minimum supported version of Alacritty is Rust 1.70.0. All patches are expected
 to work with the minimum supported version.
 
 Since `alacritty_terminal`'s version always tracks the next release, make sure that the version is
@@ -114,7 +114,7 @@ Alacritty's release process aims to provide stable and well tested releases with
 back new features during the testing period.
 
 To achieve these goals, a new branch is created for every new release. Both the release candidates
-and the final version are only comitted and tagged in this branch. The master branch only tracks
+and the final version are only committed and tagged in this branch. The master branch only tracks
 development versions, allowing us to keep the branches completely separate without merging releases
 back into master.
 
